@@ -15,9 +15,14 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Model Loading and Configuration ---
-# Set the path to your pre-trained Keras model file
-# REPLACE 'your_model.keras' with the actual filename of your model
-MODEL_PATH = 'C:/Users/hp/Desktop/olaprojects/eye_disease_model.keras'
+# The trained model ships alongside this file, so resolve it relative to this
+# module rather than to the current working directory -- that way the app runs
+# from any directory and on any machine. Set the MODEL_PATH environment
+# variable to load a different model file instead.
+MODEL_PATH = os.environ.get(
+    'MODEL_PATH',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eye_disease_model.keras')
+)
 
 # Define the class labels your model was trained to predict.
 # The order of these labels MUST match the order of your model's output,
