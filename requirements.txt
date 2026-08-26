@@ -6,10 +6,10 @@ gunicorn>=21.2
 # Inference runtime.
 #
 # LiteRT ships a 21 MB wheel and serves eye_disease_model.tflite in a measured
-# 177 MB peak -- 35% of the 512 MB free tier this app is deployed on. Full
-# TensorFlow is a ~230 MB wheel that needs ~600 MB just to import, which does
-# not fit -- that is the whole reason for the TFLite conversion (see
-# tools/convert_to_tflite.py).
+# 184 MB peak under concurrent load -- 36% of the 512 MB free tier this app is
+# deployed on. Full TensorFlow is a ~230 MB wheel that needs ~600 MB just to
+# import, which does not fit -- that is the whole reason for the TFLite
+# conversion (see tools/convert_to_tflite.py).
 #
 # Not tflite-runtime: its final release (2.14.0, 2023) publishes no Linux wheels
 # beyond cp311. ai-edge-litert is the maintained successor and covers cp310-cp314.
