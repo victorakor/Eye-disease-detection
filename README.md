@@ -9,6 +9,14 @@ recommendations for each result.
 > educational purposes. It is not validated for clinical use and must never
 > replace examination by a qualified ophthalmologist.
 
+## Live demo
+
+**<https://eye-disease-detection-xoql.onrender.com>**
+
+Hosted on Render's free tier, which **sleeps after 15 minutes idle** and takes
+roughly a minute to wake. Open the link a few minutes before demonstrating it so
+the first visitor does not sit through a cold start.
+
 ## How it works
 
 | Stage | Detail |
@@ -28,9 +36,10 @@ range. `tools/convert_to_tflite.py` asserts this on every conversion, so
 
 Full TensorFlow needs roughly **600 MB** of RAM just to `import`, which does not
 fit in a 512 MB free hosting tier. The float16 TFLite model runs the same
-network in an estimated **150–250 MB**, and shrinks the weights from 55 MB to
-15.5 MB. Conversion is verified, not assumed: the script aborts unless predicted
-classes match the Keras model exactly on probe inputs.
+network in a **measured 177 MB peak** on the deployed free instance — 35% of the
+cap — and shrinks the weights from 55 MB to 15.5 MB. Conversion is verified, not
+assumed: the script aborts unless predicted classes match the Keras model
+exactly on probe inputs.
 
 Both models are committed, so there is no separate download step:
 
@@ -165,9 +174,10 @@ directories:
 
 ## Deploying
 
-`render.yaml` is a Render Blueprint targeting the free tier. In the Render
-dashboard choose **New → Blueprint**, point it at this repository, and apply.
-It runs:
+`render.yaml` is a Render Blueprint targeting the free tier — it is what the
+[live demo](#live-demo) runs on. To stand up your own copy, choose **New →
+Blueprint** in the Render dashboard, point it at this repository, and apply.
+`autoDeploy` is on, so pushes to `main` redeploy automatically. It runs:
 
 ```bash
 gunicorn -w 1 --threads 4 -b 0.0.0.0:$PORT --timeout 120 app:app
@@ -177,8 +187,6 @@ One worker keeps a single copy of the interpreter in memory; the threads absorb
 concurrent viewers. A TFLite interpreter is **not thread-safe**, so `app.py`
 serialises `invoke()` behind a lock.
 
-Free Render instances **sleep after 15 minutes idle** and take roughly 50
-seconds to wake, so open the URL a few minutes before demonstrating it.
-
 The `Dockerfile` covers hosts that want a container instead; it serves the same
-app under gunicorn.
+app under gunicorn. Note that Hugging Face Spaces is **not** an option on a free
+account — hosting a Docker or Gradio Space requires a paid PRO subscription.
