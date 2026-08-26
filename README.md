@@ -177,7 +177,7 @@ directories:
 `render.yaml` is a Render Blueprint targeting the free tier — it is what the
 [live demo](#live-demo) runs on. To stand up your own copy, choose **New →
 Blueprint** in the Render dashboard, point it at this repository, and apply.
-`autoDeploy` is on, so pushes to `main` redeploy automatically. It runs:
+It runs:
 
 ```bash
 gunicorn -w 1 --threads 4 -b 0.0.0.0:$PORT --timeout 120 app:app
@@ -186,6 +186,12 @@ gunicorn -w 1 --threads 4 -b 0.0.0.0:$PORT --timeout 120 app:app
 One worker keeps a single copy of the interpreter in memory; the threads absorb
 concurrent viewers. A TFLite interpreter is **not thread-safe**, so `app.py`
 serialises `invoke()` behind a lock.
+
+The Blueprint sets `autoDeploy: true`, but a push only triggers a build once
+Render's GitHub App is authorised on the repository. A service created through
+Render's REST API clones the public repo without that authorisation, so it never
+receives push events — connect the repo under **Settings → Build & Deploy** in
+the dashboard to fix that, or deploy on demand instead.
 
 The `Dockerfile` covers hosts that want a container instead; it serves the same
 app under gunicorn. Note that Hugging Face Spaces is **not** an option on a free
