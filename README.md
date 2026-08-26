@@ -28,9 +28,9 @@ range. `tools/convert_to_tflite.py` asserts this on every conversion, so
 
 Full TensorFlow needs roughly **600 MB** of RAM just to `import`, which does not
 fit in a 512 MB free hosting tier. The float16 TFLite model runs the same
-network in about **150 MB**, and shrinks the weights from 55 MB to 15.5 MB.
-Conversion is verified, not assumed: the script aborts unless predicted classes
-match the Keras model exactly on probe inputs.
+network in an estimated **150–250 MB**, and shrinks the weights from 55 MB to
+15.5 MB. Conversion is verified, not assumed: the script aborts unless predicted
+classes match the Keras model exactly on probe inputs.
 
 Both models are committed, so there is no separate download step:
 
