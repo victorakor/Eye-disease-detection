@@ -1,8 +1,17 @@
 # Web framework
 Flask>=3.0
 Flask-Cors>=4.0
+gunicorn>=21.2
 
-# Model and image handling
-tensorflow>=2.16
+# Inference runtime.
+#
+# LiteRT runs the converted eye_disease_model.tflite in roughly 150 MB of RAM.
+# Full TensorFlow needs ~600 MB just to import, which does not fit in the 512 MB
+# free tier this app is deployed on -- that is the whole reason for the TFLite
+# conversion (see tools/convert_to_tflite.py).
+#
+# Not tflite-runtime: its final release (2.14.0, 2023) publishes no Linux wheels
+# beyond cp311. ai-edge-litert is the maintained successor and covers cp310-cp314.
+ai-edge-litert>=2.1
 numpy>=1.26
 Pillow>=10.0

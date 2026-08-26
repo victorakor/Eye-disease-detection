@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: eye-disease-detection
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # One worker keeps a single copy of the TFLite interpreter in memory. The
+    # threads absorb concurrent viewers during a demo; app.py serialises the
+    # actual invoke() call with a lock, because a TFLite Interpreter is not
+    # thread-safe.
+    startCommand: gunicorn -w 1 --threads 4 -b 0.0.0.0:$PORT --timeout 120 app:app
+    healthCheckPath: /
+    autoDeploy: true

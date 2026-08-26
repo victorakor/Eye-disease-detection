@@ -1,0 +1,12 @@
+# Local build-time only -- NOT installed on the server.
+#
+# TensorFlow is needed to regenerate eye_disease_model.tflite from the Keras
+# model, and to act as the fallback interpreter when running app.py locally
+# (ai-edge-litert publishes Linux wheels only). Install with:
+#
+#     python -m venv .venv
+#     .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+#     .venv/Scripts/python.exe tools/convert_to_tflite.py
+
+-r requirements.txt
+tensorflow-cpu>=2.16

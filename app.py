@@ -1,13 +1,31 @@
 # Import necessary Flask components and libraries for AI model integration
 import os
+import threading
+
 import numpy as np
-import tensorflow as tf
 from PIL import Image
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 
-# Import the specific preprocessing function for EfficientNetV2
-from tensorflow.keras.applications.efficientnet_v2 import preprocess_input as efficientnet_preprocess_input
+# Inference runs on LiteRT (TFLite), not full TensorFlow. TensorFlow needs
+# ~600 MB of RAM just to import, which does not fit the 512 MB free tier this
+# app is deployed on; the converted .tflite model runs the same network in
+# ~150 MB. Three import paths are tried so the same file works everywhere:
+#   ai_edge_litert  -- the maintained runtime, used in production (Linux)
+#   tflite_runtime  -- older name, still found on some systems
+#   tensorflow.lite -- fallback for local development, where only TF is present
+#                      (ai-edge-litert publishes no Windows wheels)
+try:
+    from ai_edge_litert.interpreter import Interpreter
+except ImportError:  # pragma: no cover
+    try:
+        from tflite_runtime.interpreter import Interpreter
+    except ImportError:
+        # Note the attribute access: tf.lite is a lazily-populated API
+        # namespace, not the tensorflow.lite package, so
+        # `from tensorflow.lite import Interpreter` raises ImportError here.
+        import tensorflow as _tf
+        Interpreter = _tf.lite.Interpreter
 
 # Initialize the Flask application
 app = Flask(__name__)
@@ -15,14 +33,17 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Model Loading and Configuration ---
-# The trained model ships alongside this file, so resolve it relative to this
+# The converted model ships alongside this file, so resolve it relative to this
 # module rather than to the current working directory -- that way the app runs
 # from any directory and on any machine. Set the MODEL_PATH environment
 # variable to load a different model file instead.
 MODEL_PATH = os.environ.get(
     'MODEL_PATH',
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eye_disease_model.keras')
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eye_disease_model.tflite')
 )
+
+# The size the network was trained on. Uploads are resized to this.
+INPUT_SIZE = (256, 256)
 
 # Define the class labels your model was trained to predict.
 # The order of these labels MUST match the order of your model's output,
@@ -34,8 +55,15 @@ CLASS_LABELS = [
     'Normal'
 ]
 
-# A global variable to hold the loaded model
-model = None
+# Globals holding the loaded interpreter and its tensor metadata
+interpreter = None
+input_detail = None
+output_detail = None
+
+# A TFLite interpreter holds mutable internal buffers, so two requests calling
+# invoke() at once would corrupt each other's results. gunicorn runs this with
+# several threads to stay responsive, so serialise the inference itself.
+inference_lock = threading.Lock()
 
 # A dictionary to store detailed responses for each diagnosis
 DIAGNOSIS_INFO = {
@@ -54,7 +82,7 @@ DIAGNOSIS_INFO = {
             'Monitor blood sugar levels closely.',
             'Follow a balanced diet and regular exercise routine.'
         ]
-        
+
     },
     'Glaucoma': {
         'message': 'Potential signs of glaucoma were detected. Consult an eye care professional for further evaluation.',
@@ -73,17 +101,24 @@ DIAGNOSIS_INFO = {
     }
 }
 
+
 # Load the model when the application starts
 def load_model():
-    """Loads the pre-trained Keras model from the file."""
-    global model
+    """Loads the converted TFLite model and caches its tensor metadata."""
+    global interpreter, input_detail, output_detail
     try:
-        # Load the model from the specified path
-        model = tf.keras.models.load_model(MODEL_PATH)
-        print("Model loaded successfully!")
+        # num_threads=1 because the free tier allocates a fraction of a CPU;
+        # extra threads only add contention there.
+        interpreter = Interpreter(model_path=MODEL_PATH, num_threads=1)
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        output_detail = interpreter.get_output_details()[0]
+        print(f"Model loaded successfully! input={input_detail['shape']} "
+              f"dtype={np.dtype(input_detail['dtype']).name}")
     except Exception as e:
         print(f"Error loading model: {e}")
-        model = None
+        interpreter = None
+
 
 # Register the model loading function to run before the first request
 with app.app_context():
@@ -98,13 +133,12 @@ def serve_html():
     # render_template looks for a file named index.html in the 'templates' folder
     return render_template('index.html')
 
+
 # The prediction route will handle the image analysis POST request
 @app.route('/predict', methods=['POST'])
 def predict():
     """Handles image uploads and returns an analysis result from the AI model."""
-    global model
-
-    if model is None:
+    if interpreter is None:
         return jsonify({
             "diagnosis": "Model Not Loaded",
             "message": "The AI model could not be loaded. Please check the model file path.",
@@ -125,31 +159,49 @@ def predict():
         # Preprocess the image for the model
         image = Image.open(file.stream).convert("RGB")
         # Resize the image to match the model's expected input shape
-        image = image.resize((256, 256))
-        image_array = np.array(image)
+        image = image.resize(INPUT_SIZE)
+        # EfficientNetV2 takes pixels in the [0, 255] range: its rescaling is
+        # baked into the network, which is why keras' efficientnet_v2
+        # preprocess_input is a no-op. tools/convert_to_tflite.py asserts this,
+        # so there is nothing to reproduce here beyond the dtype change.
+        image_array = np.asarray(image, dtype=np.float32)
         # Add a batch dimension
         image_array = np.expand_dims(image_array, axis=0)
-        
-        # Use the specific EfficientNet preprocessing function
-        image_array = efficientnet_preprocess_input(image_array)
 
         # Make a prediction with the model
-        predictions = model.predict(image_array)
-        predicted_class_index = np.argmax(predictions)
-        predicted_label = CLASS_LABELS[predicted_class_index]
-        confidence = float(predictions[0][predicted_class_index])
+        with inference_lock:
+            interpreter.set_tensor(input_detail['index'],
+                                   image_array.astype(input_detail['dtype']))
+            interpreter.invoke()
+            # Copy the result out before releasing the lock -- the buffer is
+            # reused by the next invoke().
+            predictions = np.array(interpreter.get_tensor(output_detail['index']))
 
-        # Get the appropriate response from the dictionary
+        # The network's final Dense layer is linear, so these are raw logits,
+        # not probabilities -- they go negative and do not sum to 1. argmax is
+        # unaffected by that, but reporting a confidence means applying softmax
+        # explicitly. Subtracting the max first stops exp() from overflowing.
+        logits = np.asarray(predictions[0], dtype=np.float64)
+        exp_logits = np.exp(logits - logits.max())
+        probabilities = exp_logits / exp_logits.sum()
+
+        predicted_class_index = int(np.argmax(logits))
+        predicted_label = CLASS_LABELS[predicted_class_index]
+        confidence = float(probabilities[predicted_class_index])
+
+        # Get the appropriate response from the dictionary. Copy it, so that
+        # adding 'diagnosis' does not mutate the shared DIAGNOSIS_INFO entry.
         if predicted_label in DIAGNOSIS_INFO:
-            response_data = DIAGNOSIS_INFO[predicted_label]
+            response_data = dict(DIAGNOSIS_INFO[predicted_label])
             response_data['diagnosis'] = predicted_label
+            response_data['confidence'] = round(confidence, 4)
         else:
             response_data = {
                 'diagnosis': 'Unknown Result',
                 "message": 'The model returned an unexpected result.',
                 "recommendations": []
             }
-        
+
         return jsonify(response_data)
 
     except Exception as e:
@@ -160,8 +212,12 @@ def predict():
             "recommendations": []
         }), 500
 
+
 # Run the application
 if __name__ == '__main__':
-    # Setting debug to True will automatically restart the server on code changes
-    # It should be set to False in a production environment
-    app.run(debug=True)
+    # Debug mode restarts the server on code changes, but it also exposes an
+    # interactive Python console on any traceback -- never leave it enabled on
+    # a public deployment. Off unless FLASK_DEBUG is set for local development.
+    debug = os.environ.get('FLASK_DEBUG', '').lower() in ('1', 'true', 'yes')
+    # PORT is supplied by the host in production; 5000 keeps local runs familiar.
+    app.run(debug=debug, port=int(os.environ.get('PORT', 5000)))
