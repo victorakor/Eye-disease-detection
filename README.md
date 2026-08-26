@@ -175,9 +175,9 @@ directories:
 ## Deploying
 
 `render.yaml` is a Render Blueprint targeting the free tier — it is what the
-[live demo](#live-demo) runs on. To stand up your own copy, choose **New →
-Blueprint** in the Render dashboard, point it at this repository, and apply.
-It runs:
+[live demo](https://eye-disease-detection-xoql.onrender.com) runs on. To stand
+up your own copy, choose **New → Blueprint** in the Render dashboard, point it
+at this repository, and apply. It runs:
 
 ```bash
 gunicorn -w 1 --threads 4 -b 0.0.0.0:$PORT --timeout 120 app:app
